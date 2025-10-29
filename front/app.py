@@ -33,7 +33,7 @@ instrument = getattr(instruments, instrument_name)
 # --- Selección de fechas e intervalo ---
 start_date = st.date_input("Fecha inicial:", datetime(2025, 1, 1))
 end_date = st.date_input("Fecha final:", datetime(2025, 2, 1))
-interval_option = st.selectbox("Intervalo:", ["1 hora", "1 día"], index=0)
+interval_option = st.selectbox("Intervalo:", ["1 día"], index=0)
 interval = INTERVAL_HOUR_1 if interval_option == "1 hora" else INTERVAL_DAY_1
 
 # --- Botón principal ---
@@ -118,19 +118,27 @@ if st.button("📥 Obtener y analizar datos"):
                 ax.legend()
                 st.pyplot(fig)
 
-            # --- Análisis de regresión ---
-            st.subheader("📈 Análisis de Regresión Lineal Múltiple")
+            # --- Análisis de regresión con rentabilidades ---
+            st.subheader("📈 Análisis de Regresión Lineal Múltiple (Rentabilidades)")
 
-            features = ["SMA_20", "EMA_20", "RSI", "MACD", "Signal"]
-            df_reg = df.dropna(subset=features + ["close"])
+            # Calcular rentabilidades
+            df["retorno"] = df["close"].pct_change()
+            for col in ["RSI", "MACD", "Signal"]:
+                df[f"ret_{col}"] = df[col].pct_change()
+
+            # Preparar datos para regresión
+            features = [f"ret_{col}" for col in ["RSI", "MACD", "Signal"]]
+            df_reg = df.dropna(subset=features + ["retorno"])
 
             X = df_reg[features]
-            y = df_reg["close"]
+            y = df_reg["retorno"]
 
+            # Entrenar modelo
             model = LinearRegression()
             model.fit(X, y)
             y_pred = model.predict(X)
 
+            # Métricas
             r2 = r2_score(y, y_pred)
             mae = mean_absolute_error(y, y_pred)
             rmse = np.sqrt(mean_squared_error(y, y_pred))
@@ -148,15 +156,15 @@ if st.button("📥 Obtener y analizar datos"):
             st.dataframe(coef_df)
 
             # --- Gráfico real vs predicho ---
-            st.subheader("📉 Precio real vs predicho")
+            st.subheader("📉 Rentabilidad real vs predicha")
             fig, ax = plt.subplots(figsize=(12, 5))
             ax.plot(df_reg["Fecha"], y, label="Real", color="blue")
             ax.plot(df_reg["Fecha"], y_pred, label="Predicho", color="red", alpha=0.7)
             ax.legend()
             st.pyplot(fig)
 
-            # --- Pronóstico 8 periodos ---
-            st.subheader("🔮 Pronóstico para los próximos 8 periodos")
+            # --- Pronóstico ---
+            st.subheader("🔮 Pronóstico de rentabilidad para los próximos 8 periodos")
 
             last_row = df_reg.iloc[-1]
             if interval == INTERVAL_HOUR_1:
@@ -166,24 +174,29 @@ if st.button("📥 Obtener y analizar datos"):
 
             future_dates = [last_row["Fecha"] + (i+1)*step for i in range(8)]
             last_features = last_row[features].values.reshape(1, -1)
-            future_predictions = [model.predict(last_features)[0] for _ in range(8)]
+            future_returns = [model.predict(last_features)[0] for _ in range(8)]
 
             forecast_df = pd.DataFrame({
                 "Fecha": future_dates,
-                "Pronóstico_close": future_predictions
+                "Pronóstico_retorno": future_returns
             })
+
+            # Convertir rentabilidad pronosticada a precios estimados
+            last_price = df_reg["close"].iloc[-1]
+            forecast_prices = [last_price * (1 + r) for r in np.cumsum(future_returns)]
+            forecast_df["Precio_estimado"] = forecast_prices
 
             st.dataframe(forecast_df)
 
             # --- Gráfico combinado ---
-            st.subheader("📊 Precio histórico + pronóstico")
+            st.subheader("📊 Precio histórico + pronóstico (basado en rentabilidades)")
             fig, ax = plt.subplots(figsize=(12, 5))
             ax.plot(df_reg["Fecha"], df_reg["close"], label="Histórico", color="blue")
-            ax.plot(forecast_df["Fecha"], forecast_df["Pronóstico_close"], label="Pronóstico", color="orange", marker="o")
+            ax.plot(forecast_df["Fecha"], forecast_df["Precio_estimado"], label="Pronóstico", color="orange", marker="o")
             ax.legend()
             st.pyplot(fig)
 
-            st.info("El pronóstico asume estabilidad temporal de los indicadores técnicos recientes.")
+            st.info("El modelo predice rentabilidades basadas en los cambios de los indicadores técnicos recientes.")
 
         except Exception as e:
             st.error(f"❌ Error al obtener los datos: {e}")
